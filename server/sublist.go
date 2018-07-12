@@ -60,7 +60,6 @@ type Sublist struct {
 	cacheHits uint64
 	inserts   uint64
 	removes   uint64
-	cache     map[string]*SublistResult
 	root      *level
 	count     uint32
 }
@@ -92,7 +91,7 @@ func newLevel() *level {
 
 // New will create a default sublist
 func NewSublist() *Sublist {
-	return &Sublist{root: newLevel(), cache: make(map[string]*SublistResult)}
+	return &Sublist{root: newLevel()}
 }
 
 // Insert adds a subscription into the sublist
@@ -184,7 +183,6 @@ func (s *Sublist) Insert(sub *subscription) error {
 	s.count++
 	s.inserts++
 
-	s.addToCache(subject, sub)
 	atomic.AddUint64(&s.genid, 1)
 
 	s.Unlock()
@@ -202,52 +200,9 @@ func copyResult(r *SublistResult) *SublistResult {
 	return nr
 }
 
-// addToCache will add the new entry to existing cache
-// entries if needed. Assumes write lock is held.
-func (s *Sublist) addToCache(subject string, sub *subscription) {
-	for k, r := range s.cache {
-		if matchLiteral(k, subject) {
-			// Copy since others may have a reference.
-			nr := copyResult(r)
-			if sub.queue == nil {
-				nr.psubs = append(nr.psubs, sub)
-			} else {
-				if i := findQSliceForSub(sub, nr.qsubs); i >= 0 {
-					nr.qsubs[i] = append(nr.qsubs[i], sub)
-				} else {
-					nr.qsubs = append(nr.qsubs, []*subscription{sub})
-				}
-			}
-			s.cache[k] = nr
-		}
-	}
-}
-
-// removeFromCache will remove the sub from any active cache entries.
-// Assumes write lock is held.
-func (s *Sublist) removeFromCache(subject string, sub *subscription) {
-	for k := range s.cache {
-		if !matchLiteral(k, subject) {
-			continue
-		}
-		// Since someone else may be referecing, can't modify the list
-		// safely, just let it re-populate.
-		delete(s.cache, k)
-	}
-}
-
 // Match will match all entries to the literal subject.
 // It will return a set of results for both normal and queue subscribers.
 func (s *Sublist) Match(subject string) *SublistResult {
-	s.RLock()
-	atomic.AddUint64(&s.matches, 1)
-	rc, ok := s.cache[subject]
-	s.RUnlock()
-	if ok {
-		atomic.AddUint64(&s.cacheHits, 1)
-		return rc
-	}
-
 	tsa := [32]string{}
 	tokens := tsa[:0]
 	start := 0
@@ -264,16 +219,6 @@ func (s *Sublist) Match(subject string) *SublistResult {
 
 	s.Lock()
 	matchLevel(s.root, tokens, result)
-
-	// Add to our cache
-	s.cache[subject] = result
-	// Bound the number of entries to sublistMaxCache
-	if len(s.cache) > slCacheMax {
-		for k := range s.cache {
-			delete(s.cache, k)
-			break
-		}
-	}
 	s.Unlock()
 
 	return result
@@ -429,7 +374,6 @@ func (s *Sublist) remove(sub *subscription, shouldLock bool) error {
 			l.pruneNode(n, t)
 		}
 	}
-	s.removeFromCache(subject, sub)
 	atomic.AddUint64(&s.genid, 1)
 
 	return nil
@@ -527,9 +471,7 @@ func (s *Sublist) Count() uint32 {
 
 // CacheCount returns the number of result sets in the cache.
 func (s *Sublist) CacheCount() int {
-	s.RLock()
-	defer s.RUnlock()
-	return len(s.cache)
+	return 0
 }
 
 // Public stats for the sublist
@@ -551,26 +493,15 @@ func (s *Sublist) Stats() *SublistStats {
 
 	st := &SublistStats{}
 	st.NumSubs = s.count
-	st.NumCache = uint32(len(s.cache))
+	st.NumCache = 0
 	st.NumInserts = s.inserts
 	st.NumRemoves = s.removes
 	st.NumMatches = atomic.LoadUint64(&s.matches)
-	if st.NumMatches > 0 {
-		st.CacheHitRate = float64(atomic.LoadUint64(&s.cacheHits)) / float64(st.NumMatches)
-	}
+	st.CacheHitRate = 0
+
 	// whip through cache for fanout stats
-	tot, max := 0, 0
-	for _, r := range s.cache {
-		l := len(r.psubs) + len(r.qsubs)
-		tot += l
-		if l > max {
-			max = l
-		}
-	}
-	st.MaxFanout = uint32(max)
-	if tot > 0 {
-		st.AvgFanout = float64(tot) / float64(len(s.cache))
-	}
+	st.MaxFanout = 0
+	st.AvgFanout = 0
 	return st
 }
 
