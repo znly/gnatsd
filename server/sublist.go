@@ -484,8 +484,8 @@ type SublistStats struct {
 
 // Stats will return a stats structure for the current state.
 func (s *Sublist) Stats() *SublistStats {
-	s.Lock()
-	defer s.Unlock()
+	s.RLock()
+	defer s.RUnlock()
 
 	st := &SublistStats{}
 	st.NumSubs = s.count
