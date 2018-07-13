@@ -1,0 +1,2 @@
+[24769] [INF] File log re-opened
+[24769] [ERR] Failed to reload server configuration: error opening config file: open /home/antoninamand/go/src/github.com/nats-io/gnatsd/server/tmp.conf: no such file or directory

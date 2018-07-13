@@ -55,7 +55,6 @@ type SublistResult struct {
 // A Sublist stores and efficiently retrieves subscriptions.
 type Sublist struct {
 	sync.RWMutex
-	genid     uint64
 	matches   uint64
 	cacheHits uint64
 	inserts   uint64
@@ -182,8 +181,6 @@ func (s *Sublist) Insert(sub *subscription) error {
 
 	s.count++
 	s.inserts++
-
-	atomic.AddUint64(&s.genid, 1)
 
 	s.Unlock()
 	return nil
@@ -374,7 +371,6 @@ func (s *Sublist) remove(sub *subscription, shouldLock bool) error {
 			l.pruneNode(n, t)
 		}
 	}
-	atomic.AddUint64(&s.genid, 1)
 
 	return nil
 }

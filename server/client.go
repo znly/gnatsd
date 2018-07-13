@@ -199,14 +199,12 @@ const (
 
 // Used in readloop to cache hot subject lookups and group statistics.
 type readCache struct {
-	genid   uint64
-	results map[string]*SublistResult
-	prand   *rand.Rand
-	msgs    int
-	bytes   int
-	subs    int
-	rsz     int // Read buffer size
-	srs     int // Short reads, used for dynamic buffer resizing.
+	prand *rand.Rand
+	msgs  int
+	bytes int
+	subs  int
+	rsz   int // Read buffer size
+	srs   int // Short reads, used for dynamic buffer resizing.
 }
 
 func (c *client) String() (id string) {
@@ -1452,34 +1450,8 @@ func (c *client) processMsg(msg []byte) {
 
 	// Match the subscriptions. We will use our own L1 map if
 	// it's still valid, avoiding contention on the shared sublist.
-	var r *SublistResult
-	var ok bool
-
-	genid := atomic.LoadUint64(&srv.sl.genid)
-
-	if genid == c.in.genid && c.in.results != nil {
-		r, ok = c.in.results[string(c.pa.subject)]
-	} else {
-		// reset our L1 completely.
-		c.in.results = make(map[string]*SublistResult)
-		c.in.genid = genid
-	}
-
-	if !ok {
-		subject := string(c.pa.subject)
-		r = srv.sl.Match(subject)
-		c.in.results[subject] = r
-		// Prune the results cache. Keeps us from unbounded growth.
-		if len(c.in.results) > maxResultCacheSize {
-			n := 0
-			for subject := range c.in.results {
-				delete(c.in.results, subject)
-				if n++; n > pruneSize {
-					break
-				}
-			}
-		}
-	}
+	subject := string(c.pa.subject)
+	r := srv.sl.Match(subject)
 
 	// This is the fanout scale.
 	fanout := len(r.psubs) + len(r.qsubs)
